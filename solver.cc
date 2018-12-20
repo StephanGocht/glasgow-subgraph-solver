@@ -27,6 +27,7 @@ using std::is_same;
 using std::list;
 using std::max;
 using std::map;
+using std::min;
 using std::move;
 using std::mt19937;
 using std::next;
@@ -34,6 +35,7 @@ using std::numeric_limits;
 using std::optional;
 using std::pair;
 using std::sort;
+using std::stable_partition;
 using std::stable_sort;
 using std::string;
 using std::swap;
@@ -67,7 +69,7 @@ namespace
         vector<int> pattern_vertex_labels, target_vertex_labels, pattern_edge_labels, target_edge_labels;
 
         SubgraphModel(const InputGraph & target, const InputGraph & pattern, const Params & params) :
-            max_graphs(1 + (params.noninjective ? 0 : 4) + (params.induced ? 1 : 0)),
+            max_graphs(1 + (params.noninjective && ! params.distance_filtering ? 0 : 4) + (params.induced ? 1 : 0)),
             pattern_size(pattern.size()),
             full_pattern_size(pattern.size()),
             target_size(target.size()),
@@ -153,11 +155,16 @@ namespace
             }
         }
 
-        auto prepare(bool induced, bool noninjective) -> void
+        auto prepare(bool induced, bool noninjective, bool distance_filtering) -> void
         {
             if (! noninjective) {
                 build_supplemental_graphs(pattern_graph_rows, pattern_size);
                 build_supplemental_graphs(target_graph_rows, target_size);
+            }
+
+            if (distance_filtering) {
+                build_distance_graph(pattern_graph_rows, pattern_size);
+                build_distance_graph(target_graph_rows, target_size);
             }
 
             // build complement graphs
@@ -225,6 +232,42 @@ namespace
         }
 
         template <typename PossiblySomeOtherBitSetType_>
+        auto build_distance_graph(vector<PossiblySomeOtherBitSetType_> & graph_rows, unsigned size) -> void
+        {
+            const constexpr unsigned infinity = numeric_limits<unsigned>::max();
+            vector<vector<unsigned> > distances(size, vector<unsigned>(size, infinity));
+
+            for (unsigned v = 0 ; v < size ; ++v)
+                distances[v][v] = 0;
+
+            for (unsigned v = 0 ; v < size ; ++v) {
+                auto nv = graph_rows[v * max_graphs + 0];
+                for (auto c = nv.find_first() ; c != decltype(nv)::npos ; c = nv.find_first()) {
+                    nv.reset(c);
+                    distances[v][c] = 1;
+                }
+            }
+
+            for (unsigned u = 0 ; u < size ; ++u)
+                for (unsigned v = 0 ; v < size ; ++v)
+                    for (unsigned w = 0 ; w < size ; ++w)
+                        if (distances[v][u] != infinity && distances[u][w] != infinity)
+                            distances[v][w] = min(distances[v][w], distances[v][u] + distances[u][w]);
+
+            for (unsigned v = 0 ; v < size ; ++v) {
+                for (unsigned w = v ; w < size ; ++w) {
+                    unsigned distance = distances[w][v];
+                    for (unsigned p = 2 ; p <= 5 ; ++p) {
+                        if (distance <= p) {
+                            graph_rows[v * max_graphs + p - 1].set(w);
+                            graph_rows[w * max_graphs + p - 1].set(v);
+                        }
+                    }
+                }
+            }
+        }
+
+        template <typename PossiblySomeOtherBitSetType_>
         auto build_complement_graphs(vector<PossiblySomeOtherBitSetType_> & graph_rows, unsigned size) -> void
         {
             for (unsigned v = 0 ; v < size ; ++v)
@@ -276,6 +319,13 @@ namespace
             // this should not be a linear scan...
             return values.end() != find_if(values.begin(), values.end(), [&] (const auto & a) {
                     return a.assignment == assignment;
+                    });
+        }
+
+        bool contains_value(unsigned t) const
+        {
+            return values.end() != find_if(values.begin(), values.end(), [&] (const auto & a) {
+                    return a.assignment.target_vertex == t;
                     });
         }
     };
@@ -690,6 +740,12 @@ namespace
                 case ValueOrdering::Random:
                     shuffle(branch_v.begin(), branch_v.begin() + branch_v_end, global_rand);
                     break;
+            }
+
+            if (params.noninjective && params.prefer_injectivity) {
+                stable_partition(branch_v.begin(), branch_v.begin() + branch_v_end, [&] (int v) -> bool {
+                        return ! assignments.contains_value(v);
+                        });
             }
 
             int discrepancy_count = 0;
@@ -1117,7 +1173,7 @@ namespace
             }
 
             Searcher solver(model, params);
-            model.prepare(params.induced, params.noninjective);
+            model.prepare(params.induced, params.noninjective, params.noninjective && params.distance_filtering);
             Result result = solver.solve();
 
             return result;

@@ -54,7 +54,9 @@ auto main(int argc, char * argv[]) -> int
 
         po::options_description configuration_options{ "Advanced configuration options" };
         configuration_options.add_options()
-            ("nogood-size-limit",  po::value<int>(),         "Maximum size of nogood to generate (0 disables nogoods")
+            ("distance-filtering",                           "Do distance filtering (only for noninjective)")
+            ("prefer-injectivity",                           "Prefer injectivity for value-ordering (only for noninjective)")
+            ("nogood-size-limit",  po::value<int>(),         "Maximum size of nogood to generate (0 disables nogoods)")
             ("restarts-constant",  po::value<int>(),         "How often to perform restarts (0 disables restarts)")
             ("restart-timer",      po::value<int>(),         "Also restart after this many milliseconds (0 disables)")
             ("geometric-restarts", po::value<double>(),      "Use geometric restarts with the specified multiplier (default is Luby)")
@@ -99,6 +101,8 @@ auto main(int argc, char * argv[]) -> int
         /* Figure out what our options should be. */
         Params params;
 
+        params.distance_filtering = options_vars.count("distance-filtering");
+        params.prefer_injectivity = options_vars.count("prefer-injectivity");
         params.noninjective = options_vars.count("noninjective");
         params.induced = options_vars.count("induced");
         params.enumerate = options_vars.count("enumerate");

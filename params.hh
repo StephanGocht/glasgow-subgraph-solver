@@ -32,6 +32,12 @@ struct Params
     /// Enumerate?
     bool enumerate = false;
 
+    /// Do distance filtering when non-injective?
+    bool distance_filtering = false;
+
+    /// Prefer injectivity for value-ordering?
+    bool prefer_injectivity = false;
+
     /// Which value-ordering heuristic?
     ValueOrdering value_ordering_heuristic = ValueOrdering::Biased;
 
