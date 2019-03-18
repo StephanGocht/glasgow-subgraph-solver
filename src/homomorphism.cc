@@ -33,6 +33,7 @@ using std::find_if;
 using std::function;
 using std::greater;
 using std::is_same;
+using std::list;
 using std::make_optional;
 using std::make_unique;
 using std::max;
@@ -68,6 +69,9 @@ namespace
     template <typename BitSetType_, typename ArrayType_>
     struct SubgraphModel
     {
+        const InputGraph & original_pattern;
+        const InputGraph & original_target;
+
         const int max_graphs;
         unsigned pattern_size, full_pattern_size, target_size;
 
@@ -83,6 +87,8 @@ namespace
         vector<int> pattern_vertex_labels, target_vertex_labels, pattern_edge_labels, target_edge_labels;
 
         SubgraphModel(const InputGraph & target, const InputGraph & pattern, const HomomorphismParams & params) :
+            original_pattern(pattern),
+            original_target(target),
             max_graphs(1 + (supports_exact_path_graphs(params) ? 4 : 0) + (params.induced ? 1 : 0)),
             pattern_size(pattern.size()),
             full_pattern_size(pattern.size()),
@@ -351,14 +357,16 @@ namespace
 
         const Model & model;
         const HomomorphismParams & params;
+        const list<VertexToVertexMapping> & pattern_automorphisms;
 
         Watches<Assignment, AssignmentWatchTable> watches;
 
         mt19937 global_rand;
 
-        Searcher(const Model & m, const HomomorphismParams & p) :
+        Searcher(const Model & m, const HomomorphismParams & p, const list<VertexToVertexMapping> & pa) :
             model(m),
-            params(p)
+            params(p),
+            pattern_automorphisms(pa)
         {
             // set up space for watches
             if (might_have_watches(params)) {
@@ -589,6 +597,20 @@ namespace
                     nogood.literals.emplace_back(a.assignment);
 
             watches.post_nogood(move(nogood));
+
+            for (const auto & aut : pattern_automorphisms) {
+                Nogood<Assignment> aut_nogood;
+
+                for (auto & a : assignments.values)
+                    if (a.is_decision) {
+                        Assignment aut_a{
+                            unsigned(aut.find(a.assignment.pattern_vertex)->second),
+                            a.assignment.target_vertex };
+                        aut_nogood.literals.emplace_back(aut_a);
+                    }
+
+                watches.post_nogood(move(aut_nogood));
+            }
         }
 
         auto softmax_shuffle(
@@ -860,10 +882,12 @@ namespace
 
         const Model & model;
         const HomomorphismParams & params;
+        const list<VertexToVertexMapping> & pattern_automorphisms;
 
-        BasicSolver(const Model & m, const HomomorphismParams & p) :
+        BasicSolver(const Model & m, const HomomorphismParams & p, const list<VertexToVertexMapping> & pa) :
             model(m),
-            params(p)
+            params(p),
+            pattern_automorphisms(pa)
         {
         }
 
@@ -1022,6 +1046,7 @@ namespace
 
         using BasicSolver<BitSetType_, ArrayType_>::model;
         using BasicSolver<BitSetType_, ArrayType_>::params;
+        using BasicSolver<BitSetType_, ArrayType_>::pattern_automorphisms;
 
         using BasicSolver<BitSetType_, ArrayType_>::initialise_domains;
 
@@ -1047,7 +1072,7 @@ namespace
             bool done = false;
             unsigned number_of_restarts = 0;
 
-            Searcher<BitSetType_, ArrayType_> searcher(model, params);
+            Searcher<BitSetType_, ArrayType_> searcher(model, params, pattern_automorphisms);
 
             while (! done) {
                 ++number_of_restarts;
@@ -1149,8 +1174,8 @@ namespace
 
         unsigned n_threads;
 
-        ThreadedSolver(const Model & m, const HomomorphismParams & p, unsigned t) :
-            BasicSolver<BitSetType_, ArrayType_>(m, p),
+        ThreadedSolver(const Model & m, const HomomorphismParams & p, const list<VertexToVertexMapping> & pa, unsigned t) :
+            BasicSolver<BitSetType_, ArrayType_>(m, p, pa),
             n_threads(t)
         {
         }
@@ -1181,6 +1206,7 @@ namespace
 
             function<auto (unsigned) -> void> work_function = [&searchers, &common_domains, &threads, &work_function,
                         &model = this->model, &params = this->params, n_threads = this->n_threads,
+                        &pattern_automorphisms = this->pattern_automorphisms,
                         &common_result, &common_result_mutex, &by_thread_nodes, &by_thread_propagations,
                         &wait_for_new_nogoods_barrier, &synced_nogoods_barrier, &restart_synchroniser] (unsigned t) -> void
             {
@@ -1189,7 +1215,7 @@ namespace
 
                 bool just_the_first_thread = (0 == t) && params.delay_thread_creation;
 
-                searchers[t] = make_unique<Searcher<BitSetType_, ArrayType_> >(model, params);
+                searchers[t] = make_unique<Searcher<BitSetType_, ArrayType_> >(model, params, pattern_automorphisms);
                 if (0 != t)
                     searchers[t]->global_rand.seed(t);
 
@@ -1355,9 +1381,36 @@ namespace
 
             model.prepare(params);
 
+            // should really be postponed until it's needed
+            list<string> orbit_extra_stats;
+            list<VertexToVertexMapping> pattern_automorphisms;
+            if (params.orbit_nogoods) {
+                HomomorphismParams orbit_params;
+                orbit_params.timeout = params.timeout;
+                orbit_params.start_time = params.start_time;
+                orbit_params.induced = true;
+                orbit_params.injectivity = Injectivity::Injective;
+                orbit_params.count_solutions = true;
+                orbit_params.enumerate_callback = [&] (const VertexToVertexMapping & m) {
+                    pattern_automorphisms.push_back(m);
+                };
+                orbit_params.restarts_schedule = make_unique<NoRestartsSchedule>();
+                orbit_params.remove_isolated_vertices = false;
+                orbit_params.orbit_nogoods = false;
+
+                HomomorphismResult orbit_result = solve_homomorphism_problem(
+                        pair{ model.original_pattern, model.original_pattern }, orbit_params);
+                if (! orbit_result.complete) {
+                    orbit_result.extra_stats.emplace_back("failed_during_pattern_isomorphism = true");
+                    return orbit_result;
+                }
+
+                orbit_extra_stats.emplace_back("pattern_orbits = " + to_string(orbit_result.solution_count));
+            }
+
             HomomorphismResult result;
             if (1 == params.n_threads) {
-                SequentialSolver<BitSetType_, ArrayType_> solver(model, params);
+                SequentialSolver<BitSetType_, ArrayType_> solver(model, params, pattern_automorphisms);
                 result = solver.solve();
             }
             else {
@@ -1365,10 +1418,11 @@ namespace
                     throw UnsupportedConfiguration{ "Threaded search requires restarts" };
 
                 unsigned n_threads = how_many_threads(params.n_threads);
-                ThreadedSolver<BitSetType_, ArrayType_> solver(model, params, n_threads);
+                ThreadedSolver<BitSetType_, ArrayType_> solver(model, params, pattern_automorphisms, n_threads);
                 result = solver.solve();
             }
 
+            result.extra_stats.insert(result.extra_stats.end(), orbit_extra_stats.begin(), orbit_extra_stats.end());
             return result;
         }
     };
@@ -1402,7 +1456,7 @@ auto solve_homomorphism_problem(const pair<InputGraph, InputGraph> & graphs, con
 
         return result;
     }
-    else
-        return select_graph_size<SubgraphRunner, HomomorphismResult>(AllGraphSizes(), graphs.second, graphs.first, params);
+
+    return select_graph_size<SubgraphRunner, HomomorphismResult>(AllGraphSizes(), graphs.second, graphs.first, params);
 }
 

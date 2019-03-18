@@ -93,6 +93,7 @@ auto main(int argc, char * argv[]) -> int
         vector<string> pattern_less_thans;
         po::options_description symmetry_options{ "Manual symmetry options" };
         symmetry_options.add_options()
+            ("orbit-nogoods",                                  "Break pattern symmetries by posting orbits of nogoods")
             ("pattern-less-than",   po::value<vector<string> >(&pattern_less_thans),
                                                                "Specify a pattern less than constraint, in the form v<w");
         display_options.add(symmetry_options);
@@ -225,6 +226,8 @@ auto main(int argc, char * argv[]) -> int
 
         params.clique_detection = ! options_vars.count("no-clique-detection");
         params.remove_isolated_vertices = ! options_vars.count("no-isolated-vertex-removal");
+
+        params.orbit_nogoods = options_vars.count("orbit-nogoods");
 
         for (auto & s : pattern_less_thans) {
             auto p = s.find('<');

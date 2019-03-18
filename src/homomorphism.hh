@@ -69,6 +69,9 @@ struct HomomorphismParams
 
     /// Less pattern constraints
     std::list<std::pair<std::string, std::string> > pattern_less_constraints;
+
+    /// Post orbits of nogoods?
+    bool orbit_nogoods = false;
 };
 
 struct HomomorphismResult
