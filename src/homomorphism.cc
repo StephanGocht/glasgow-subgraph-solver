@@ -1402,6 +1402,8 @@ namespace
                         pair{ model.original_pattern, model.original_pattern }, orbit_params);
                 if (! orbit_result.complete) {
                     orbit_result.extra_stats.emplace_back("failed_during_pattern_isomorphism = true");
+                    orbit_result.mapping.clear();
+                    orbit_result.solution_count = 0;
                     return orbit_result;
                 }
 
