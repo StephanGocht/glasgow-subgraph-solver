@@ -17,7 +17,6 @@
 #include <boost/iostreams/stream.hpp>
 
 using std::copy;
-using std::endl;
 using std::find;
 using std::function;
 using std::istreambuf_iterator;
@@ -42,6 +41,8 @@ using std::vector;
 using boost::iostreams::bzip2_compressor;
 using boost::iostreams::file_sink;
 using boost::iostreams::filtering_ostream;
+
+const char* endl = "\n";
 
 namespace
 {
